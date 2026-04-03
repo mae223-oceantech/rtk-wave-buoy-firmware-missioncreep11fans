@@ -48,9 +48,9 @@ bool beginSensors()
             if (settings.printMajorDebugMessages == true)
             {
               Serial.println(F("beginSensors: third getModuleInfo call failed! Giving up..."));
-              qwiicOnline.uBlox = false;
-              return (false);
             }
+            qwiicOnline.uBlox = false;
+            return (false);
           }
         }
       }

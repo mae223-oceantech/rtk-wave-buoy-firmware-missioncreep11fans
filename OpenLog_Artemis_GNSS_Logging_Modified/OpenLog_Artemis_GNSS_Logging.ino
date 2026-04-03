@@ -110,7 +110,7 @@ const byte PIN_VIN_MONITOR = 34; // VIN/3 (1M/2M - will require a correction fac
 #endif
 
 const byte PIN_POWER_LOSS = 3;
-const byte PIN_LOGIC_DEBUG = -1;
+const int8_t PIN_LOGIC_DEBUG = -1;
 const byte PIN_MICROSD_POWER = 15;
 const byte PIN_QWIIC_POWER = 18;
 const byte PIN_STAT_LED = 19;
@@ -170,6 +170,7 @@ File imuDataFile;  //File that all incoming IMU CSV data is written to
 #endif  // SD_FAT_TYPE
 
 char gnssDataFileName[30] = ""; //We keep a record of this file name so that we can re-open it upon wakeup from sleep
+char imuDataFileName[30] = "";  //Global IMU file name to survive sleep/wake cycles
 const int sdPowerDownDelay = 100; //Delay for this many ms before turning off the SD card power
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
@@ -468,18 +469,15 @@ void beginIMU() {
   delay(100); // Wait for IMU to power up
 
   SPI.begin();
-  enableCIPOpullUp(); // Enable CIPO pull-up
+  if (!enableCIPOpullUp()) { // Enable CIPO pull-up
+    Serial.println(F("WARNING: Failed to enable CIPO pull-up. SPI may be unreliable."));
+  }
 
   bool initialized = false;
   int attempts = 0;
   while (!initialized && attempts < 5) {
-    // ADDED: More detailed debug messages
-    Serial.print(F("IMU initialization attempt "));
-    Serial.print(attempts + 1);
-    Serial.print(F(": "));
-    
     myICM.begin(PIN_IMU_CHIP_SELECT, SPI);
-    
+
     if (settings.printMajorDebugMessages) {
       Serial.print(F("IMU initialization attempt "));
       Serial.print(attempts + 1);
@@ -554,27 +552,25 @@ void readIMUData() {
     Serial.println(myICM.accZ());
   }
   
-  // Create IMU data string
-  String imuDataString = createIMUDataString();
-  
-  // ADDED: Debug the data string being created
+  // Create IMU data string in a stack buffer (no heap allocation)
+  char imuDataBuf[200];
+  int imuDataLen = createIMUDataString(imuDataBuf, sizeof(imuDataBuf));
+
   if (settings.printMinorDebugMessages) {
     Serial.print(F("IMU Data String: "));
-    Serial.print(imuDataString);
+    Serial.print(imuDataBuf);
   }
-  
+
   // Log to SD card if enabled
   if (settings.logData && online.microSD && online.dataLogging) {
-    if (imuDataFile) { // ADDED: Check if file is actually open
-      size_t bytesWritten = imuDataFile.print(imuDataString);
+    if (imuDataFile) {
+      size_t bytesWritten = imuDataFile.write(imuDataBuf, imuDataLen);
       if (bytesWritten > 0) {
-        // ADDED: Confirm bytes were written
         if (settings.printMinorDebugMessages) {
           Serial.print(F("Written "));
           Serial.print(bytesWritten);
           Serial.println(F(" bytes to IMU file"));
         }
-        imuDataFile.sync(); // ADDED: Force write to SD card immediately
       } else {
         Serial.println(F("Failed to write to IMU file"));
       }
@@ -582,76 +578,46 @@ void readIMUData() {
       Serial.println(F("IMU file not open"));
     }
   }
-  
+
   // Output to terminal if enabled
   if (settings.enableTerminalOutput) {
-    Serial.print(imuDataString);
+    Serial.print(imuDataBuf);
   }
   
   lastIMUReadTime = currentTime;
 }
 
-String createIMUDataString() {
-  String dataString = "";
-  
+// Uses a static char buffer instead of String to avoid heap fragmentation.
+// Fixes: sign loss for values between -1 and 0, gyro truncation, trailing comma.
+int createIMUDataString(char *buf, int bufSize) {
+  int pos = 0;
+
   // Add timestamp
   char timeString[40];
   getTimeString(timeString);
-  dataString += timeString;
-  dataString += ",IMU,";
-  
-  // solve for float/string/int problem - multiply by 100, convert to int, then divide by 100
+  pos += snprintf(buf + pos, bufSize - pos, "%s,IMU", timeString);
+
   if (settings.sensor_IMU.enableAccel) {
-    float accX = myICM.accX();
-    int accX_int = (int)(accX * 100);
-    dataString += String(accX_int / 100);
-    dataString += ".";
-    if (abs(accX_int % 100) < 10) dataString += "0";
-    dataString += String(abs(accX_int % 100));
-    dataString += ",";
-    
-    float accY = myICM.accY();
-    int accY_int = (int)(accY * 100);
-    dataString += String(accY_int / 100);
-    dataString += ".";
-    if (abs(accY_int % 100) < 10) dataString += "0";
-    dataString += String(abs(accY_int % 100));
-    dataString += ",";
-    
-    float accZ = myICM.accZ();
-    int accZ_int = (int)(accZ * 100);
-    dataString += String(accZ_int / 100);
-    dataString += ".";
-    if (abs(accZ_int % 100) < 10) dataString += "0";
-    dataString += String(abs(accZ_int % 100));
-    dataString += ",";
+    pos += snprintf(buf + pos, bufSize - pos, ",%.2f,%.2f,%.2f",
+                    myICM.accX(), myICM.accY(), myICM.accZ());
   }
-  
-  // integers
+
   if (settings.sensor_IMU.enableGyro) {
-    dataString += String((int)myICM.gyrX());
-    dataString += ",";
-    dataString += String((int)myICM.gyrY());
-    dataString += ",";
-    dataString += String((int)myICM.gyrZ());
-    dataString += ",";
+    pos += snprintf(buf + pos, bufSize - pos, ",%.2f,%.2f,%.2f",
+                    myICM.gyrX(), myICM.gyrY(), myICM.gyrZ());
   }
-  
+
   if (settings.sensor_IMU.enableMag) {
-    dataString += String((int)myICM.magX());
-    dataString += ",";
-    dataString += String((int)myICM.magY());
-    dataString += ",";
-    dataString += String((int)myICM.magZ());
-    dataString += ",";
+    pos += snprintf(buf + pos, bufSize - pos, ",%.2f,%.2f,%.2f",
+                    myICM.magX(), myICM.magY(), myICM.magZ());
   }
-  
+
   if (settings.sensor_IMU.enableTemp) {
-    dataString += String((int)myICM.temp());
+    pos += snprintf(buf + pos, bufSize - pos, ",%.1f", myICM.temp());
   }
-  
-  dataString += "\r\n";
-  return dataString;
+
+  pos += snprintf(buf + pos, bufSize - pos, "\r\n");
+  return pos;
 }
 
 void configureSerial1TxRx(void) // Configure pins 12 and 13 for UART1 TX and RX
@@ -685,9 +651,9 @@ void beginDataLogging()
     }
 
     // Creation of IMU CSV File with better error handling
-    if (settings.sensor_IMU.log) { // ADDED: Only create IMU file if logging is enabled
-      char imuDataFileName[30];
-      strcpy(imuDataFileName, findNextAvailableIMULog(settings.nextDataLogNumber, "imuLog"));
+    if (settings.sensor_IMU.log) { // Only create IMU file if logging is enabled
+      // Use (nextDataLogNumber - 1) to match the GNSS log number that was just assigned
+      strcpy(imuDataFileName, findNextAvailableIMULog(settings.nextDataLogNumber - 1, "imuLog"));
       
       // ADDED: Debug message showing which file we're trying to open
       Serial.print(F("Opening IMU file: "));

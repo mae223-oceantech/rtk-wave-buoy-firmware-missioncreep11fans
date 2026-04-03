@@ -56,6 +56,13 @@ void storeData(void)
     {
       gnssDataFile.sync();
       updateDataFileAccess(&gnssDataFile); //Update the file access time stamp
+
+      // Sync IMU file on the same 1-second interval (not on every write)
+      if (imuDataFile && settings.sensor_IMU.log && online.imu)
+      {
+        imuDataFile.sync();
+      }
+
       lastDataLogSyncTime = millis();
     }
   }
