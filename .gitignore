@@ -54,3 +54,19 @@ dkms.conf
 # Personal WiFi config
 secrets.h
 
+# Jupyter notebooks
+*.ipynb
+
+# Instructor/dev-only code and data
+drewcode/
+matlab/
+
+# Local SD card data
+ola_data/
+
+# Claude settings
+**/.claude/
+
+# macOS
+.DS_Store
+
