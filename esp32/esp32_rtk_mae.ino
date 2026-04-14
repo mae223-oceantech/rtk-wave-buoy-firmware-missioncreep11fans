@@ -156,11 +156,22 @@ void loop()
   }
 }
 
+
+uint8_t calcNMEAChecksum(const char* sentence) {
+  uint8_t checksum = 0;
+  // Start after '$', stop before '*'
+  for (int i = 1; sentence[i] != '*' && sentence[i] != '\0'; i++) {
+    checksum ^= sentence[i];
+  }
+  return checksum;
+}
+
 //Connect to NTRIP Caster, receive RTCM, and push to ZED module over I2C
 void beginClient()
 {
   WiFiClient ntripClient;
   long rtcmCount = 0;
+  unsigned long lastGGASent_ms = 0;
 
   Serial.println(F("Subscribing to Caster. Press button to stop. LED ON = running"));
 
@@ -220,8 +231,12 @@ void beginClient()
         const int SERVER_BUFFER_SIZE  = 512;
         char serverRequest[SERVER_BUFFER_SIZE];
 
-        snprintf(serverRequest, SERVER_BUFFER_SIZE, "GET /%s HTTP/1.0\r\nUser-Agent: NTRIP SparkFun u-blox Client v1.0\r\n",
-                 mountPoint);
+        snprintf(serverRequest, SERVER_BUFFER_SIZE,
+          "GET /%s HTTP/1.1\r\n"
+          "Host: %s\r\n"
+          "Ntrip-Version: Ntrip/2.0\r\n"
+          "User-Agent: NTRIP SparkFun u-blox Client v1.0\r\n",
+          mountPoint, casterHost);
 
         char credentials[512];
         if (strlen(casterUser) == 0)
@@ -316,6 +331,20 @@ void beginClient()
           Serial.print(F("Connected to "));
           Serial.println(casterHost);
           lastReceivedRTCM_ms = millis(); //Reset timeout
+          char gga[100];
+          snprintf(gga, sizeof(gga),
+            "$GPGGA,000000.00,3252.8000,N,11715.0000,W,1,08,1.0,0.0,M,0.0,M,,*00\r\n");
+          uint8_t cs = calcNMEAChecksum(gga);
+          char csStr[3];
+          snprintf(csStr, sizeof(csStr), "%02X", cs);
+          gga[strlen(gga) - 4] = csStr[0];
+          gga[strlen(gga) - 3] = csStr[1];
+          ntripClient.print(gga);
+          lastGGASent_ms = millis();
+          Serial.print(F("Sent initial GGA, checksum: "));
+          Serial.println(csStr);
+
+
         }
       } //End attempt to connect
     } //End connected == false
@@ -325,12 +354,65 @@ void beginClient()
       uint8_t rtcmData[512 * 4]; //Most incoming data is around 500 bytes but may be larger
       rtcmCount = 0;
 
+      // Send GGA to caster every 10 seconds
+      if (millis() - lastGGASent_ms > 10000)
+      {
+        // Get current position from ZED
+        double lat = myGNSS.getLatitude() / 10000000.0;
+        double lon = myGNSS.getLongitude() / 10000000.0;
+        
+        // Only send if we have some fix
+        if (myGNSS.getFixType() > 0)
+        {
+          char gga[100];
+          // Simplified GGA - lat/lon only, Polaris just needs approximate position
+          int latDeg = (int)abs(lat);
+          double latMin = (abs(lat) - latDeg) * 60.0;
+          int lonDeg = (int)abs(lon);
+          double lonMin = (abs(lon) - lonDeg) * 60.0;
+          
+          snprintf(gga, sizeof(gga), "$GPGGA,000000.00,%02d%08.5f,%c,%03d%08.5f,%c,1,08,1.0,0.0,M,0.0,M,,*00\r\n",
+            latDeg, latMin, lat >= 0 ? 'N' : 'S',
+            lonDeg, lonMin, lon >= 0 ? 'E' : 'W');
+          uint8_t cs = calcNMEAChecksum(gga);
+          char csStr[3];
+          snprintf(csStr, sizeof(csStr), "%02X", cs);
+          gga[strlen(gga) - 4] = csStr[0];
+          gga[strlen(gga) - 3] = csStr[1];
+          ntripClient.print(gga);
+          lastGGASent_ms = millis();
+          Serial.println(F("GGA sent to caster"));
+        }
+      }
+
       //Print any available RTCM data
       while (ntripClient.available())
       {
-        //Serial.write(ntripClient.read()); //Pipe to serial port is fine but beware, it's a lot of binary data
-        rtcmData[rtcmCount++] = ntripClient.read();
-        if (rtcmCount == sizeof(rtcmData)) break;
+        // Read chunk size line (hex digits followed by \r\n)
+        char chunkSizeBuf[10];
+        int idx = 0;
+        while (ntripClient.available()) {
+          char c = ntripClient.read();
+          if (c == '\n') break;
+          if (c != '\r') chunkSizeBuf[idx++] = c;
+        }
+        chunkSizeBuf[idx] = '\0';
+        int chunkSize = strtol(chunkSizeBuf, NULL, 16);
+        if (chunkSize == 0) break; // last chunk
+
+        // Read exactly chunkSize bytes of RTCM
+        int bytesRead = 0;
+        while (bytesRead < chunkSize && ntripClient.available()) {
+          rtcmData[rtcmCount++] = ntripClient.read();
+          bytesRead++;
+          if (rtcmCount == sizeof(rtcmData)) break;
+        }
+        // Consume trailing \r\n after chunk data
+        while (ntripClient.available()) {
+          char c = ntripClient.read();
+          if (c == '\n') break;
+        }
+        break; // process what we have, come back next loop iteration
       }
 
       if (rtcmCount > 0)
