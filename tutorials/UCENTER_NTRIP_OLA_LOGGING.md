@@ -1,8 +1,8 @@
 # ZED-F9P Setup: u-center NTRIP + OLA Logging
 
-In this lab you will connect the ZED-F9P directly to a PC running u-center to configure it, provide RTK corrections via the campus NTRIP server, and observe the system reach an RTK fix. The OpenLog Artemis logs the resulting high-precision GPS data to SD card over Qwiic at the same time.
+In this lab you will connect the ZED-F9P directly to a PC running u-center to configure it, connect to the **Point One Nav Polaris** RTK correction network, and observe the system reach an RTK fix. The OpenLog Artemis logs the resulting high-precision GPS data to SD card over Qwiic at the same time.
 
-This is the same configuration the firmware handles automatically in the field — doing it manually first helps you understand what the firmware is doing and lets you watch each step in real time.
+This is the same configuration the firmware (`esp32_polaris.ino`) handles automatically in the field — doing it manually first helps you understand what the firmware is doing and lets you watch each step in real time.
 
 ---
 
@@ -103,9 +103,11 @@ This writes your settings to the ZED-F9P's non-volatile memory so they survive a
 
 ---
 
-## Part 4 — Connect to the NTRIP Caster
+## Part 4 — Connect to the Polaris NTRIP Network
 
-NTRIP delivers RTK correction data from a reference base station to your rover (the ZED-F9P). u-center acts as the NTRIP client here — in the field deployment, the ESP32 takes over this role.
+NTRIP delivers RTK correction data to your rover (the ZED-F9P). Polaris uses a **Virtual Reference Station (VRS)** — rather than streaming corrections from a single fixed base station, it uses your rover's position to synthesize optimal corrections from the nearest stations in its nationwide network. To do this, your NTRIP client must send its GPS position (as an NMEA GGA sentence) back to the server after connecting.
+
+u-center handles this automatically. In the field deployment, `esp32_polaris.ino` does the same thing in firmware.
 
 1. Go to **Receiver → NTRIP Client...**
 2. Fill in the connection details:
