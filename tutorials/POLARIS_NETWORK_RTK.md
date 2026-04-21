@@ -61,4 +61,18 @@ Sparser networks (e.g. 100 km spacing) require higher-order ionospheric models a
 
 ## Relevance to the wave buoy
 
-Polaris synthesizes a local virtual base station within ~1–2 km of wherever the buoy is at any given time. This is why it works offshore and not just near campus — the corrections are computed for the buoy's actual location, updated continuously as it drifts. A single fixed base station (like the UCSD/SIO server) would degrade once the buoy moves more than ~30 km from shore.
+Polaris synthesizes a virtual base station near the buoy's current position. Its real advantages over a single campus base station (like the UCSD/SIO server) are:
+
+- **Denser network** — 30–40 km station spacing means the nearest physical stations are closer, so the interpolated corrections are more accurate for a buoy operating in the Southern California nearshore zone
+- **Resilience** — not dependent on a single campus server being online
+- **Portability** — works for deployments anywhere in the US, not just near UCSD
+
+However, **all Polaris reference stations are on land**. For a buoy well offshore (>50–100 km into the Pacific), there are no stations to the west and the interpolation becomes extrapolation — accuracy degrades just as it does with single-baseline RTK. Neither approach is well-suited to truly offshore open-ocean deployments.
+
+| Scenario | UCSD/SIO base | Polaris |
+|----------|--------------|---------|
+| Nearshore (<15 km from Scripps) | Fine | Fine |
+| Moderate offshore (15–50 km) | Degrading | Better |
+| Far offshore (>50–100 km Pacific) | Poor | Also poor |
+
+For far offshore work, **PPP (Precise Point Positioning)** using satellite-delivered corrections (e.g. u-blox PointPerfect, Fugro StarFire) or a vessel-based local reference station would be the appropriate approach.
